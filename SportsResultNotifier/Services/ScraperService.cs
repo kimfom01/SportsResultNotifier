@@ -3,7 +3,7 @@ using SportsResultNotifier.Models;
 
 namespace SportsResultNotifier.Services;
 
-public class ScraperService
+public class ScraperService : IScraperService
 {
     private readonly string _url;
 
@@ -12,36 +12,52 @@ public class ScraperService
         _url = url;
     }
 
-    private HtmlDocument GetDocument()
+    private HtmlDocument GetDocument(string url)
     {
         var web = new HtmlWeb();
 
-        HtmlDocument doc = web.Load(_url);
+        HtmlDocument document = web.Load(url);
 
-        return doc;
+        return document;
+    }
+
+    private List<string> GetLinks()
+    {
+        var linksList = new List<string>();
+
+        var doc = GetDocument(_url);
+
+        var linkNodes = doc.DocumentNode.SelectNodes("//p[@class = 'links']/a[1]");
+
+        foreach (var node in linkNodes)
+        {
+            var baseUrl = new Uri(_url);
+
+            var url = new Uri(baseUrl, node.Attributes["href"].Value);
+
+            linksList.Add(url.AbsoluteUri);
+        }
+
+        return linksList;
     }
 
     public List<Result> GetResults()
     {
-        var doc = GetDocument();
+        var linksList = GetLinks();
 
-        var gameRootNode = GetRootNode(doc);
+        var results = new List<Result>();
 
-        var gameSummary = gameRootNode.SelectNodes("//table[@class = 'teams']");
-
-        List<Result> results = new(gameSummary.Count);
-
-        foreach (var game in gameSummary)
+        foreach (var link in linksList)
         {
-            var homeTeam = GetTeam(game, Position.TeamA);
+            var doc = GetDocument(link);
 
-            var awayTeam = GetTeam(game, Position.TeamB);
+            var namesNode = doc.DocumentNode.SelectNodes("//strong/a");
+            List<string> names = GetTeamsNames(namesNode);
 
-            var result = new Result
-            {
-                HomeTeam = homeTeam,
-                AwayTeam = awayTeam
-            };
+            var scoresNode = doc.DocumentNode.SelectNodes("//div[@class = 'score']");
+            List<string> scores = GetTeamsScores(scoresNode);
+
+            var result = CreateResult(names, scores);
 
             results.Add(result);
         }
@@ -49,81 +65,48 @@ public class ScraperService
         return results;
     }
 
-    private HtmlNode GetRootNode(HtmlDocument document)
+    private List<string> GetTeamsScores(HtmlNodeCollection scoresNode)
     {
-        var rootNode = HtmlNode.CreateNode("<div class=\"game_summaries\"></div>");
-
-        // var gameCards = document.DocumentNode.SelectNodes("//table[contains(@class, 'teams')]");
-        var gameCards = document.DocumentNode.SelectNodes("//div[contains(@class, 'game_summaries')]");
-
-        rootNode.AppendChildren(gameCards);
-
-        return rootNode;
-    }
-
-    private Team GetTeam(HtmlNode game, Position position)
-    {
-        int index = GetIndex(position);
-
-        var name = GetName(game, "//table[@class = 'teams']/tbody/tr/td/a", (int)position);
-        var score = GetScore(game, index);
-
-        var team = CreateTeam(name, score);
-
-        return team;
-    }
-
-    private int GetScore(HtmlNode game, int index)
-    {
-        var scores = GetScores(game, "//tr/td[@class = 'right']");
-        return scores[index];
-    }
-
-    private Team CreateTeam(string name, int score)
-    {
-        return new Team
+        var scores = new List<string>();
+        foreach (var node in scoresNode)
         {
-            Name = name,
-            Score = score
+            scores.Add(node.InnerText);
+        }
+
+        return scores;
+    }
+
+    private List<string> GetTeamsNames(HtmlNodeCollection namesNode)
+    {
+        var names = new List<string>();
+        foreach (var node in namesNode)
+        {
+            names.Add(node.InnerText);
+        }
+
+        return names;
+    }
+
+    private Result CreateResult(List<string> names, List<string> scores)
+    {
+        var teamA = new Team
+        {
+            Name = names[0],
+            Score = scores[0]
         };
-    }
 
-    private int GetIndex(Position position)
-    {
-        int index = -1;
-
-        switch (position)
+        var teamB = new Team
         {
-            case Position.TeamA:
-                index = 0;
-                break;
-            case Position.TeamB:
-                index = 1;
-                break;
-        }
+            Name = names[1],
+            Score = scores[1]
+        };
 
-        return index;
-    }
-
-    private List<int> GetScores(HtmlNode game, string xPath)
-    {
-        var nodes = game.SelectNodes(xPath);
-        List<int> scoresList = new(2);
-
-        foreach (var node in nodes)
+        var result = new Result
         {
-            if (int.TryParse(node.InnerText, out int score))
-            {
-                scoresList.Add(score);
-            }
-        }
+            HomeTeam = teamA,
+            AwayTeam = teamB
+        };
 
-        return scoresList;
-    }
-
-    private string GetName(HtmlNode game, string xPath, int position)
-    {
-        var name = game.SelectNodes(xPath)[position].InnerText;
-        return name;
+        return result;
     }
 }
